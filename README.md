@@ -33,7 +33,7 @@ pip install huggingface_hub
 **Llama 3.2 models require license acceptance:**
 
 1. **Request Access:**
-   - Visit [Hugging Face Llama 3.2 page](https://huggingface.co/meta-llama/Llama-3.2-1B)
+   - Visit [Hugging Face Llama 3.2 page](https://huggingface.co/onnx-community/Llama-3.2-1B)
    - Click "Request Access" and fill out the form
    - Wait for approval (usually within a few hours to days)
 
