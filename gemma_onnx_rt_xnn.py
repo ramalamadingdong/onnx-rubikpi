@@ -1,4 +1,4 @@
-import onnxruntime as ort
+import sys
 import os
 import numpy as np
 from pathlib import Path
@@ -6,26 +6,47 @@ from tokenizers import Tokenizer
 import json
 import time
 
+# Ensure we use the system onnxruntime, not the local one
+if 'onnxruntime' in sys.modules:
+    del sys.modules['onnxruntime']
+import onnxruntime as ort
+
 def setup_model_session(model_path):
-    """Setup ONNX Runtime session with CPU-only configuration."""
+    """Setup ONNX Runtime session with XNNPACK provider optimized for speed."""
     session_options = ort.SessionOptions()
 
-    # Set session configuration for optimization
-    session_options.add_session_config_entry("session.disable_prepacking", "1")
-    session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    # Optimize for speed
+    session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL
+    session_options.enable_cpu_mem_arena = True
+    session_options.enable_mem_pattern = True
+    session_options.enable_mem_reuse = True
 
-    providers = ["CPUExecutionProvider"]
+    # Set intra-op parallelism to use all available cores
+    session_options.intra_op_num_threads = 0  # 0 means use all available cores
+    session_options.inter_op_num_threads = 0  # 0 means use all available cores
+
+    # XNNPACK-specific optimizations
+    xnnpack_options = {
+        'intra_op_num_threads': 0,  # Use all available cores
+        'enable_fast_math': True,   # Enable fast math for better performance
+    }
+
+    providers = [
+        ("XnnpackExecutionProvider", xnnpack_options),
+        "CPUExecutionProvider"
+    ]
 
     session = ort.InferenceSession(model_path, providers=providers, sess_options=session_options)
     return session
 
-def load_llama_model_and_tokenizer():
-    """Load Llama 3.2 1B INT8 model and tokenizer."""
+def load_gemma_model_and_tokenizer():
+    """Load Gemma 3 1B INT8 model and tokenizer."""
     # Set up paths
-    root_dir = Path(__file__).parent
-    model_path = root_dir / "Llama-3.2-1b" / "onnx" / "model_int8.onnx"
-    tokenizer_path = root_dir / "Llama-3.2-1b" / "tokenizer.json"
-    config_path = root_dir / "Llama-3.2-1b" / "config.json"
+    root_dir = Path(__file__).parent / "gemma-3-1b-it-ONNX-GQA"
+    model_path = root_dir / "onnx" / "model_int8.onnx"
+    tokenizer_path = root_dir / "tokenizer.json"
+    config_path = root_dir / "config.json"
 
     print(f"Loading model from: {model_path}")
     print(f"Loading tokenizer from: {tokenizer_path}")
@@ -42,8 +63,7 @@ def load_llama_model_and_tokenizer():
 
     return session, tokenizer, config
 
-def inspect_model_inputs_outputs(session):
-    """Inspect model inputs and outputs to understand the structure."""
+
     print("\n" + "="*50)
     print("MODEL INPUT/OUTPUT INSPECTION")
     print("="*50)
@@ -67,25 +87,26 @@ def inspect_model_inputs_outputs(session):
 
 def initialize_kv_cache(config, batch_size=1, max_seq_len=2048):
     """Initialize KV cache based on model configuration."""
-    num_layers = config.get("num_hidden_layers", 16)
-    num_heads = 8  # Force to match ONNX model input
-    hidden_size = 512  # Force to match ONNX model input
-    head_dim = hidden_size // num_heads
+    num_layers = config.get("num_hidden_layers", 26)
+    num_heads = config.get("num_attention_heads", 4)
+    num_kv_heads = config.get("num_key_value_heads", 1)
+    hidden_size = config.get("hidden_size", 1152)
+    head_dim = config.get("head_dim", 256)
 
-    print(f"Initializing KV cache for {num_layers} layers, {num_heads} heads, head_dim={head_dim}")
+    print(f"Initializing KV cache for {num_layers} layers, {num_heads} heads, {num_kv_heads} kv_heads, head_dim={head_dim}")
 
     # Initialize empty past key values
     past_key_values = {}
     for layer_idx in range(num_layers):
-        # Format: (batch_size, num_heads, seq_len, head_dim)
+        # Format: (batch_size, num_kv_heads, seq_len, head_dim)
         past_key_values[f"past_key_values.{layer_idx}.key"] = np.zeros(
-            (batch_size, num_heads, 0, head_dim), dtype=np.float32
+            (batch_size, num_kv_heads, 0, head_dim), dtype=np.float32
         )
         past_key_values[f"past_key_values.{layer_idx}.value"] = np.zeros(
-            (batch_size, num_heads, 0, head_dim), dtype=np.float32
+            (batch_size, num_kv_heads, 0, head_dim), dtype=np.float32
         )
 
-    return past_key_values, num_layers, num_heads, head_dim
+    return past_key_values, num_layers, num_heads, num_kv_heads, head_dim
 
 def prepare_model_inputs(input_ids, attention_mask, position_ids, past_key_values):
     """Prepare inputs for the model in the format expected by the ONNX model."""
@@ -116,7 +137,7 @@ def update_kv_cache(past_key_values, new_key_values, num_layers):
     return updated_kv
 
 def generate_text(session, tokenizer, config, prompt, max_length=50, temperature=0.7, do_sample=True):
-    """Generate text using the Llama model following deepseek-style approach."""
+    """Generate text using the Gemma model with XNNPACK provider"""
     print(f"\nGenerating text for prompt: '{prompt}'")
     print(f"Max length: {max_length}, Temperature: {temperature}")
 
@@ -134,9 +155,9 @@ def generate_text(session, tokenizer, config, prompt, max_length=50, temperature
     position_ids = np.arange(seq_len, dtype=np.int64).reshape(1, -1)
 
     # Initialize KV cache
-    past_key_values, num_layers, num_heads, head_dim = initialize_kv_cache(config, batch_size)
+    past_key_values, num_layers, num_heads, num_kv_heads, head_dim = initialize_kv_cache(config, batch_size)
 
-    print(f"Model configuration: {num_layers} layers, {num_heads} heads, head_dim={head_dim}")
+    print(f"Model configuration: {num_layers} layers, {num_heads} heads, {num_kv_heads} kv_heads, head_dim={head_dim}")
 
     # First inference (prompt processing)
     print(f"\nProcessing initial prompt of length {seq_len}")
@@ -239,17 +260,14 @@ def generate_text(session, tokenizer, config, prompt, max_length=50, temperature
     return full_response
 
 def main():
-    """Main function demonstrating Llama 3.2 1B INT8 inference following deepseek pattern."""
+    """Main function demonstrating Gemma 3 1B INT8 inference following."""
     print("="*70)
-    print("LLAMA 3.2 1B INT8 ONNX INFERENCE - DEEPSEEK STYLE")
+    print("GEMMA 3 1B INT8 ONNX INFERENCE ")
     print("="*70)
 
     try:
         # Load model and tokenizer
-        session, tokenizer, config = load_llama_model_and_tokenizer()
-
-        # Inspect model structure
-        inputs, outputs = inspect_model_inputs_outputs(session)
+        session, tokenizer, config = load_gemma_model_and_tokenizer()
 
         print("\n" + "="*70)
         print("GENERATION INTERFACE")
@@ -281,13 +299,11 @@ def main():
     except Exception as e:
         print(f"Error loading model or tokenizer: {e}")
         print("\nMake sure you have the required files:")
-        print("- Llama-3.2-1b/onnx/model_int8.onnx")
-        print("- Llama-3.2-1b/tokenizer.json")
-        print("- Llama-3.2-1b/config.json")
-        print("\nFor Llama models, you need to:")
-        print("1. Request access at: https://huggingface.co/meta-llama/Llama-3.2-1B")
-        print("2. Login to Hugging Face: huggingface-cli login")
-        print("3. Download with: huggingface-cli download onnx-community/Llama-3.2-1B --local-dir ./Llama-3.2-1b")
+        print("- gemma-3-1b-it-ONNX-GQA/onnx/model_int8.onnx")
+        print("- gemma-3-1b-it-ONNX-GQA/tokenizer.json")
+        print("- gemma-3-1b-it-ONNX-GQA/config.json")
+        print("\nTo download Gemma models:")
+        print("huggingface-cli download onnx-community/gemma-3-1b-it-ONNX-GQA --local-dir ./gemma-3-1b-it-ONNX-GQA")
         print("\nRequired dependencies:")
         print("pip install onnxruntime tokenizers numpy huggingface_hub")
         print("\nSee README.md for complete setup instructions.")

@@ -1,0 +1,15 @@
+# Local ONNX Runtime wheel file for ARM64 Linux - RUBIK PI
+./onnxruntime-1.23.0-cp312-cp312-linux_aarch64.whl
+
+# Core dependencies
+numpy
+tokenizers
+transformers
+
+# Optional dependencies for enhanced functionality
+huggingface_hub
+safetensors
+torch
+
+# Development and utility dependencies
+pathlib2

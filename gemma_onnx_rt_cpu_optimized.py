@@ -418,6 +418,16 @@ def main_optimized():
 
     except Exception as e:
         print(f"Error loading model or tokenizer: {e}")
+        print("\nMake sure you have the required files in: gemma-3-1b-it-ONNX-GQA/")
+        print("Required files:")
+        print("- gemma-3-1b-it-ONNX-GQA/onnx/model_int8.onnx (or other .onnx files)")
+        print("- gemma-3-1b-it-ONNX-GQA/tokenizer.json")
+        print("- gemma-3-1b-it-ONNX-GQA/config.json")
+        print("\nTo download Gemma models:")
+        print("huggingface-cli download onnx-community/gemma-3-1b-it-ONNX-GQA --local-dir ./gemma-3-1b-it-ONNX-GQA")
+        print("\nRequired dependencies:")
+        print("pip install onnxruntime tokenizers numpy transformers huggingface_hub")
+        print("\nSee README.md for complete setup instructions including licensing requirements.")
 
 if __name__ == "__main__":
     main_optimized()
