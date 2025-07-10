@@ -1,10 +1,10 @@
 # ONNX RubikPI XNN - Language Model Inference
 
-This project provides optimized ONNX Runtime inference implementations for running language models (Gemma 3 1B and Llama 3.2 1B) on ARM64 systems, specifically designed for Raspberry Pi and similar devices.
+This project provides optimized ONNX Runtime inference implementations for running language models (Gemma 3 1B and Llama 3.2 1B) on RUBIK Pi.
 
 ## Features
 
-- **Optimized ONNX Runtime**: Uses custom ARM64 ONNX Runtime wheel for enhanced performance
+- **Optimized ONNX Runtime**: Uses custom RUBIK-Pi ONNX Runtime wheel for enhanced performance
 - **Multiple Inference Modes**: CPU-optimized, XNNPACK-accelerated, and standard implementations
 - **KV Cache Management**: Efficient memory management for text generation
 - **Flexible Model Support**: Supports both Gemma 3 1B and Llama 3.2 1B models
